@@ -22,6 +22,7 @@ final actor Llama {
     /// Tracks the current position in the token sequence during decoding.
     var currentTokenPosition: Int32 = 0
     var processedTokens: [llama_token] = []
+    var usesPrefilledReasoning: Bool { model.metaValue(forKey: "general.architecture") == "lfm3" }
 
     init(modelPath: String, config: LlamaConfig) throws {
         guard config.batchSize > 0, config.batchSize <= UInt32(Int32.max),
@@ -132,7 +133,7 @@ final actor Llama {
     func getProcessedTokenIds() -> [llama_token] { processedTokens }
 
     func initializeCompletion(messages: [LlamaChatMessage], addAssistant: Bool? = nil) throws {
-        renderSpecialTokens = messages.contains(where: \.usesLFMToolTemplate)
+        renderSpecialTokens = messages.contains(where: \.usesLFMToolTemplate) || usesPrefilledReasoning
         let formattedPrompt = model.applyChatTemplate(to: messages, addAssistant: addAssistant)
         guard !formattedPrompt.isEmpty else {
             throw LlamaError.chatTemplateError

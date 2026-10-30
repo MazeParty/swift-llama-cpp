@@ -18,6 +18,7 @@ public struct LlamaChatMessage: Sendable {
     public let role: Role
     public let content: String
     var usesLFMToolTemplate = false
+    var usesLFM3Template = false
 
     public init(role: LlamaChatMessage.Role, content: String) {
         self.role = role
