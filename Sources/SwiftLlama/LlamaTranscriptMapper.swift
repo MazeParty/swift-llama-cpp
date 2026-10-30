@@ -45,7 +45,7 @@ enum LlamaTranscriptMapper {
                 if let raw = value.first?.metadata[LlamaLanguageModel.Metadata.rawOutput].flatMap({ try? $0.value(String.self) }) {
                     assistantRaw = raw
                 } else {
-                    assistantText += try renderCalls(value)
+                    assistantText += try renderCalls(value, profile: profile)
                 }
             case .toolOutput(let value):
                 guard profile != .textOnly else { throw unsupported(.toolCalling) }
@@ -74,13 +74,19 @@ enum LlamaTranscriptMapper {
                     let schema = try JSONSerialization.jsonObject(with: JSONEncoder().encode(definition.parameters))
                     return ["name": definition.name, "description": definition.description, "parameters": schema] as [String: Any]
                 }
-                let preamble = "List of tools: " + (try toolJSON(schemas))
+                let preamble = profile == .lfm3QADQ4_0
+                    ? "<tools>\n" + (try schemas.map(toolJSON)).joined(separator: "\n") + "\n</tools>"
+                    : "List of tools: " + (try toolJSON(schemas))
                 if messages.first?.role == .system {
                     let content = messages[0].content
-                    messages[0] = .init(role: .system, content: content + (content.isEmpty ? "" : "\n") + preamble)
+                    let separator = content.isEmpty ? "" : (profile == .lfm3QADQ4_0 ? "\n\n" : "\n")
+                    messages[0] = .init(role: .system, content: content + separator + preamble)
                 } else { messages.insert(.init(role: .system, content: preamble), at: 0) }
             }
-            for index in messages.indices { messages[index].usesLFMToolTemplate = true }
+            for index in messages.indices {
+                messages[index].usesLFMToolTemplate = true
+                messages[index].usesLFM3Template = profile == .lfm3QADQ4_0
+            }
         }
         return messages
     }
@@ -93,10 +99,10 @@ enum LlamaTranscriptMapper {
         if let maximum = request.generationOptions.maximumResponseTokens, maximum <= 0 {
             throw LlamaExecutorError.invalidOutputLimit
         }
-        var temperature = CFloat(request.generationOptions.temperature ?? 0.7)
+        var temperature = CFloat(request.generationOptions.temperature ?? (profile == .lfm3QADQ4_0 ? 0.1 : 0.7))
         var seed: UInt32 = 0
         var topP: Float = 0.95
-        var topK: Int32?
+        var topK: Int32? = profile == .lfm3QADQ4_0 ? 50 : nil
         switch request.generationOptions.samplingMode?.kind {
         case .greedy: temperature = 0
         case .randomTopK(let k, let value):
@@ -128,15 +134,24 @@ enum LlamaTranscriptMapper {
         return String(decoding: data, as: UTF8.self)
     }
 
-    private static func renderCalls(_ calls: Transcript.ToolCalls) throws -> String {
+    private static func renderCalls(_ calls: Transcript.ToolCalls, profile: LlamaCapabilityProfile) throws -> String {
         let rendered = try calls.map { call in
             guard let arguments = try JSONSerialization.jsonObject(with: Data(call.arguments.jsonString.utf8)) as? [String: Any] else { throw LlamaToolError.malformedCall }
             let values = try arguments.keys.sorted().map { key in
                 let data = try JSONSerialization.data(withJSONObject: arguments[key]!, options: [.sortedKeys, .fragmentsAllowed, .withoutEscapingSlashes])
+                if profile == .lfm3QADQ4_0 {
+                    let literal = arguments[key] as? String ?? String(decoding: data, as: UTF8.self)
+                    guard !literal.contains("</parameter>") else { throw LlamaToolError.malformedCall }
+                    return "<parameter=\(key)>\n\(literal)\n</parameter>"
+                }
                 return key + "=" + String(decoding: data, as: UTF8.self)
-            }.joined(separator: ", ")
+            }.joined(separator: profile == .lfm3QADQ4_0 ? "\n" : ", ")
+            if profile == .lfm3QADQ4_0 {
+                return "<tool_call>\n<function=\(call.toolName)>\n" + values + (values.isEmpty ? "" : "\n") + "</function>\n</tool_call>"
+            }
             return call.toolName + "(" + values + ")"
-        }.joined(separator: ", ")
+        }.joined(separator: profile == .lfm3QADQ4_0 ? "\n\n" : ", ")
+        if profile == .lfm3QADQ4_0 { return rendered }
         return LlamaToolParser.start + "[" + rendered + "]" + LlamaToolParser.end
     }
 

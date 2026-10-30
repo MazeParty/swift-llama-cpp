@@ -2,7 +2,7 @@
 
 Run any LLM locally on iOS or MacOS. Powered by [llama.cpp](https://github.com/ggml-org/llama.cpp)
 
-The package pins llama.cpp v0.4.1 through the `b10964` Apple XCFramework, with its release SHA-256 verified by SwiftPM.
+The package pins llama.cpp v0.8.0 through the `b11960` Apple XCFramework, with its release SHA-256 verified by SwiftPM.
 
 ## iOS simulator setup
 
@@ -12,7 +12,7 @@ Upstream [stopped including simulator slices in release binaries](https://github
 bash Scripts/prepare-apple-framework.sh
 ```
 
-The script verifies the official release archive and the pinned source commit, builds the arm64/x86_64 simulator slice, and combines it with the unchanged official macOS/iOS device binaries and debug symbols. SwiftPM automatically uses the resulting ignored `Artifacts/llama-b10964.xcframework`. Run the script before opening Xcode or resolving packages. If the project has already resolved the remote binary, use Xcode's **File → Packages → Reset Package Caches**, then resolve again so its cached manifest picks up the local artifact. Repeat preparation after changing the runtime pin. A checkout without this local artifact uses the official binary and supports macOS and iOS devices only.
+The script verifies the official release archive and the pinned source commit, builds the arm64/x86_64 simulator slice, and combines it with the unchanged official macOS/iOS device binaries and debug symbols. SwiftPM automatically uses the resulting ignored `Artifacts/llama-b11960.xcframework`. Run the script before opening Xcode or resolving packages. If the project has already resolved the remote binary, use Xcode's **File → Packages → Reset Package Caches**, then resolve again so its cached manifest picks up the local artifact. Repeat preparation after changing the runtime pin. A checkout without this local artifact uses the official binary and supports macOS and iOS devices only.
 
 After a runtime upgrade, clean SwiftPM and Xcode build products to avoid stale C API layouts. When updating the pin, update `llamaVersion`, `llamaChecksum`, and `llamaRevision` together in `Package.swift`.
 
@@ -175,7 +175,7 @@ let session = LanguageModelSession(model: model, tools: [myTool])
 let answer = try await session.respond(to: "Look up my record")
 ```
 
-The profile pins the shipped GGUF SHA-256 and llama.cpp b10964. Loading fails if
+The profile pins the shipped GGUF SHA-256 and llama.cpp b11960. Loading fails if
 its bytes do not match; filenames and embedded metadata do not grant tool
 capability. Requalify this profile when changing the model, framework revision,
 renderer, or parser. The app's downloaded models retain the default text profile.
@@ -213,3 +213,19 @@ TEST_RUNNER_ENCLAVE_GGUF_TEST_MODEL=/absolute/path/LFM2.5-1.2B-Instruct-QAD-Q4_0
 The real-model suite is opt-in through `ENCLAVE_GGUF_TEST_MODEL`. An explicitly
 provided missing or incorrect model fails, rather than skipping. Ordinary parser
 and native-session tests do not require the shipped LFM binary.
+
+## LFM3 text and tool profile
+
+The SHA-qualified `.lfm3QADQ4_0` profile supports official
+`LiquidAI/LFM3-1.7B-GGUF/LFM3-1.7B-QAD-Q4_0.gguf` (SHA-256
+`43a7d09a0e9cba91b63eb7052488b9564569bddfd65754d2e426465e572a7452`).
+It uses the model's text/tool template with `preserve_thinking=true` and
+`enable_thinking=true`. Text-only LFM3 architecture loading also uses that
+renderer because the C chat API reduces the template to basic ChatML. The executor starts in reasoning state when `<think>` is already present in the generation prompt; it retains this prefix in replay metadata without charging an output token.
+
+LFM3 uses `<tool_call>` / `<function=...>` / `<parameter=...>` syntax, unlike
+LFM2.5's Pythonic calls. Its parser buffers the whole batch, checks enabled tool
+names and argument schemas, and only then exposes native calls. Tool results are
+wrapped in `<tool_response>` and exact raw assistant history is retained.
+Vision, video, deferred tool discovery and forced tool choice remain unsupported.
+The legacy LFM2.5 profile and protocol remain available for installed models.

@@ -194,6 +194,9 @@ public final class LlamaModel {
     /// Apply chat template using the default model template (or custom by name).
     public func applyChatTemplate(to messages: [LlamaChatMessage], addAssistant: Bool? = nil) -> String {
         guard !messages.isEmpty, messages.allSatisfy({ !$0.content.contains("\u{0}") }) else { return "" }
+        if messages.contains(where: \.usesLFM3Template) || metaValue(forKey: "general.architecture") == "lfm3" {
+            return Self.renderLFM3Prompt(messages, bos: string(from: bosToken()), addAssistant: addAssistant ?? (messages.last?.role != .assistant))
+        }
         if messages.contains(where: \.usesLFMToolTemplate) {
             // The verified LFM template uses ChatML with preserve_thinking=true. The C API
             // cannot render its tools parameter, so the mapper supplies the exact tool preamble.
@@ -250,6 +253,20 @@ public final class LlamaModel {
         var prompt = bos
         prompt += turns.map { "<|im_start|>\($0.role.rawValue)\n\($0.content)<|im_end|>\n" }.joined()
         if addAssistant { prompt += "<|im_start|>assistant\n" }
+        return prompt
+    }
+
+    static func renderLFM3Prompt(_ messages: [LlamaChatMessage], bos: String, addAssistant: Bool) -> String {
+        let turns = messages.first?.role == .system && messages.first?.content.isEmpty == true ? messages.dropFirst() : messages[...]
+        var prompt = bos
+        for message in turns {
+            var content = message.content
+            if message.role == .assistant, !content.contains("</think>") { content = "<think></think>" + content }
+            if message.role == .tool, !content.contains("<tool_response>") { content = "<tool_response>\n" + content + "\n</tool_response>" }
+            prompt += "<|im_start|>\(message.role.rawValue)\n\(content)<|im_end|>\n"
+        }
+        // Match the official text/tool template with preserve_thinking=true and enable_thinking=true.
+        if addAssistant { prompt += "<|im_start|>assistant\n<think>" }
         return prompt
     }
 

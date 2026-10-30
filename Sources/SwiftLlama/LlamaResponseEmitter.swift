@@ -13,12 +13,23 @@ struct LlamaResponseEmitter {
     var toolDefinitions: [Transcript.ToolDefinition] = []
     var parsesTools = false
     private var toolParser = LlamaToolParser()
+    var usesXMLTools: Bool {
+        get { toolParser.usesXML }
+        set { toolParser.usesXML = newValue }
+    }
     private var rawOutput = ""
     private(set) var tokenCount = 0
     private var firstTokenTime: Double?
     private var parser = LlamaReasoningParser()
     private var hasAnswer = false
     private var answerID: String { "\(generationID)-answer" }
+
+    mutating func beginPrefilledReasoning() async throws {
+        // LFM3's generation prompt already contains this token; retain it for parsing and raw replay.
+        rawOutput = "<think>"
+        if parsesTools { _ = try toolParser.append("<think>") }
+        await send(parser.append("<think>"))
+    }
 
     mutating func append(_ text: String, countingToken: Bool = true) async throws {
         guard countingToken || !text.isEmpty else { return }

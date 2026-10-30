@@ -8,8 +8,10 @@ import CoreFoundation
 @available(iOS 27.0, macOS 27.0, *)
 public enum LlamaCapabilityProfile: Sendable {
     case textOnly
-    /// LFM2.5-1.2B-Instruct-QAD-Q4_0 with llama.cpp b10964 and the LFM tool protocol.
+    /// LFM2.5-1.2B-Instruct-QAD-Q4_0 with the Pythonic LFM tool protocol.
     case lfm2_5InstructQ4_0
+    /// LFM3-1.7B-QAD-Q4_0 with llama.cpp b11960 and the XML tool protocol.
+    case lfm3QADQ4_0
 
     func validate(modelURL: URL) throws {
         guard self != .textOnly else { return }
@@ -20,8 +22,10 @@ public enum LlamaCapabilityProfile: Sendable {
             try Task.checkCancellation()
             hash.update(data: data)
         }
-        guard hash.finalize().map({ String(format: "%02x", $0) }).joined() ==
-                "bb741ebb106d543e9de114b843a3d3d73d51c74b5801e69da2abde821a0cb3e1" else {
+        let expected = self == .lfm3QADQ4_0
+            ? "43a7d09a0e9cba91b63eb7052488b9564569bddfd65754d2e426465e572a7452"
+            : "bb741ebb106d543e9de114b843a3d3d73d51c74b5801e69da2abde821a0cb3e1"
+        guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == expected else {
             throw LlamaToolError.unverifiedModel
         }
     }
@@ -50,25 +54,28 @@ struct LlamaToolParser {
     private var pending = ""
     private var capturesCall = false
     private var reasoningEnd: String?
+    var usesXML = false
+    private var callStart: String { usesXML ? "<tool_call>" : Self.start }
+    private var callEnd: String { usesXML ? "</tool_call>" : Self.end }
 
     mutating func append(_ text: String) throws -> String {
         pending += text
         if capturesCall { return "" }
         var visible = ""
         while !pending.isEmpty {
-            let delimiters = reasoningEnd.map { [$0] } ?? [Self.start, Self.end, "<think>", "<|channel>thought\n"]
+            let delimiters = reasoningEnd.map { [$0] } ?? [callStart, callEnd, "<think>", "<|channel>thought\n"]
             let match = delimiters.compactMap { delimiter in
                 pending.range(of: delimiter).map { (delimiter, $0) }
             }.min { $0.1.lowerBound < $1.1.lowerBound }
             if let (delimiter, range) = match {
                 visible += pending[..<range.lowerBound]
                 pending = String(pending[range.upperBound...])
-                if delimiter == Self.start {
+                if delimiter == callStart {
                     pending = delimiter + pending
                     capturesCall = true
                     return visible
                 }
-                if delimiter == Self.end { throw LlamaToolError.malformedCall }
+                if delimiter == callEnd { throw LlamaToolError.malformedCall }
                 visible += delimiter
                 reasoningEnd = reasoningEnd != nil ? nil : (delimiter == "<think>" ? "</think>" : "<channel|>")
             } else {
@@ -85,8 +92,12 @@ struct LlamaToolParser {
 
     mutating func finish(definitions: [Transcript.ToolDefinition]) throws -> (String, [LlamaParsedToolCall]) {
         guard capturesCall else {
-            guard pending.isEmpty || reasoningEnd != nil || ![Self.start, Self.end].contains(where: { $0.hasPrefix(pending) }) else { throw LlamaToolError.malformedCall }
+            guard pending.isEmpty || reasoningEnd != nil || ![callStart, callEnd].contains(where: { $0.hasPrefix(pending) }) else { throw LlamaToolError.malformedCall }
             return (pending, [])
+        }
+        if usesXML {
+            var reader = LlamaXMLCallReader(pending)
+            return try reader.calls(definitions: definitions)
         }
         guard pending.hasPrefix(Self.start), let end = pending.range(of: Self.end),
               !pending[end.upperBound...].contains(Self.start), !pending[end.upperBound...].contains(Self.end) else {

@@ -12,15 +12,18 @@ protocol LlamaExecutorEngine: Actor {
     func finishDecoding() async -> String
     func resetCompletion() async
     func contextUsage(_ messages: [LlamaChatMessage], addingAssistant: Bool) async throws -> LlamaContextUsage
+    func hasPrefilledReasoning() async -> Bool
 }
 
 @available(iOS 27.0, macOS 27.0, *)
 extension LlamaExecutorEngine {
     func finishDecoding() -> String { "" }
+    func hasPrefilledReasoning() -> Bool { false }
 }
 
 @available(iOS 27.0, macOS 27.0, *)
 extension Llama: LlamaExecutorEngine {
+    func hasPrefilledReasoning() -> Bool { usesPrefilledReasoning }
     func prepare(_ messages: [LlamaChatMessage], addingAssistant: Bool) throws -> Int {
         try Task.checkCancellation()
         try initializeCompletion(messages: messages, addAssistant: addingAssistant)
@@ -130,7 +133,9 @@ final class LlamaExecutorRuntime: Sendable {
                     try await engine.updateSamplingConfig(sampling)
                     var output = LlamaResponseEmitter(requestID: request.id, inputTokens: inputTokens, start: start, channel: channel)
                     output.parsesTools = messages.contains(where: \.usesLFMToolTemplate)
+                    output.usesXMLTools = messages.contains(where: \.usesLFM3Template)
                     output.toolDefinitions = request.generationOptions.toolCallingMode == .disallowed ? [] : request.enabledToolDefinitions
+                    if await engine.hasPrefilledReasoning() { try await output.beginPrefilledReasoning() }
                     while request.generationOptions.maximumResponseTokens.map({ output.tokenCount < $0 }) ?? true {
                         try Task.checkCancellation()
                         let next = try await engine.generateNextToken()
