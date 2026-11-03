@@ -269,7 +269,7 @@ struct LlamaLanguageModelTests {
             guard case .reasoning(let value) = entry else { return nil }
             return value.segments.compactMap { if case .text(let text) = $0 { text.content } else { nil } }.joined()
         }
-        #expect(reasoning == [thought])
+        #expect(reasoning == (thought.isEmpty ? [] : [thought]))
         #expect(try LlamaTranscriptMapper.messages(session.transcript).last?.content == raw)
         #expect(session.usage.output.totalTokenCount == raw.count)
         await model.unload()

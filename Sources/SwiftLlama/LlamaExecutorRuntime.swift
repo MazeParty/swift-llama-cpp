@@ -136,6 +136,7 @@ final class LlamaExecutorRuntime: Sendable {
                     output.usesXMLTools = messages.contains(where: \.usesLFM3Template)
                     output.toolDefinitions = request.generationOptions.toolCallingMode == .disallowed ? [] : request.enabledToolDefinitions
                     if await engine.hasPrefilledReasoning() { try await output.beginPrefilledReasoning() }
+                    else if output.usesXMLTools { try await output.beginPrefilledReasoning(enabled: false) }
                     while request.generationOptions.maximumResponseTokens.map({ output.tokenCount < $0 }) ?? true {
                         try Task.checkCancellation()
                         let next = try await engine.generateNextToken()

@@ -13,9 +13,9 @@ public struct LlamaLanguageModel: LanguageModel {
     public let capabilityProfile: LlamaCapabilityProfile
     public let executorConfiguration: Executor.Configuration
 
-    public init(modelURL: URL, configuration: LlamaConfig, capabilityProfile: LlamaCapabilityProfile = .textOnly) {
+    public init(modelURL: URL, configuration: LlamaConfig, capabilityProfile: LlamaCapabilityProfile = .textOnly, thinkingEnabled: Bool = true) {
         self.capabilityProfile = capabilityProfile
-        executorConfiguration = .init(modelURL: modelURL, configuration: configuration, capabilityProfile: capabilityProfile)
+        executorConfiguration = .init(modelURL: modelURL, configuration: configuration, capabilityProfile: capabilityProfile, thinkingEnabled: thinkingEnabled)
     }
 
     init(capabilityProfile: LlamaCapabilityProfile = .textOnly, engineFactory: @escaping @Sendable () throws -> any LlamaExecutorEngine) {
@@ -76,7 +76,7 @@ public struct LlamaLanguageModelExecutor: LanguageModelExecutor {
         let runtime: LlamaExecutorRuntime
         let contextWindowTokens: Int
 
-        public init(modelURL: URL, configuration: LlamaConfig, capabilityProfile: LlamaCapabilityProfile = .textOnly) {
+        public init(modelURL: URL, configuration: LlamaConfig, capabilityProfile: LlamaCapabilityProfile = .textOnly, thinkingEnabled: Bool = true) {
             contextWindowTokens = Int(configuration.maxTokenCount)
             runtime = LlamaExecutorRuntime {
                 guard configuration.batchSize > 0,
@@ -85,8 +85,11 @@ public struct LlamaLanguageModelExecutor: LanguageModelExecutor {
                       configuration.maxTokenCount <= UInt32(Int32.max) else {
                     throw LlamaExecutorError.invalidConfiguration
                 }
+                guard thinkingEnabled || capabilityProfile.supportsThinkingControl else {
+                    throw LlamaExecutorError.unsupportedThinkingControl
+                }
                 try capabilityProfile.validate(modelURL: modelURL)
-                return try Llama(modelPath: modelURL.path(percentEncoded: false), config: configuration)
+                return try Llama(modelPath: modelURL.path(percentEncoded: false), config: configuration, thinkingEnabled: thinkingEnabled)
             }
         }
 

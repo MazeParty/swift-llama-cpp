@@ -192,10 +192,10 @@ public final class LlamaModel {
     }
 
     /// Apply chat template using the default model template (or custom by name).
-    public func applyChatTemplate(to messages: [LlamaChatMessage], addAssistant: Bool? = nil) -> String {
+    public func applyChatTemplate(to messages: [LlamaChatMessage], addAssistant: Bool? = nil, thinkingEnabled: Bool = true) -> String {
         guard !messages.isEmpty, messages.allSatisfy({ !$0.content.contains("\u{0}") }) else { return "" }
         if messages.contains(where: \.usesLFM3Template) || metaValue(forKey: "general.architecture") == "lfm3" {
-            return Self.renderLFM3Prompt(messages, bos: string(from: bosToken()), addAssistant: addAssistant ?? (messages.last?.role != .assistant))
+            return Self.renderLFM3Prompt(messages, bos: string(from: bosToken()), addAssistant: addAssistant ?? (messages.last?.role != .assistant), thinkingEnabled: thinkingEnabled)
         }
         if messages.contains(where: \.usesLFMToolTemplate) {
             // The verified LFM template uses ChatML with preserve_thinking=true. The C API
@@ -256,7 +256,7 @@ public final class LlamaModel {
         return prompt
     }
 
-    static func renderLFM3Prompt(_ messages: [LlamaChatMessage], bos: String, addAssistant: Bool) -> String {
+    static func renderLFM3Prompt(_ messages: [LlamaChatMessage], bos: String, addAssistant: Bool, thinkingEnabled: Bool = true) -> String {
         let turns = messages.first?.role == .system && messages.first?.content.isEmpty == true ? messages.dropFirst() : messages[...]
         var prompt = bos
         for message in turns {
@@ -265,8 +265,8 @@ public final class LlamaModel {
             if message.role == .tool, !content.contains("<tool_response>") { content = "<tool_response>\n" + content + "\n</tool_response>" }
             prompt += "<|im_start|>\(message.role.rawValue)\n\(content)<|im_end|>\n"
         }
-        // Match the official text/tool template with preserve_thinking=true and enable_thinking=true.
-        if addAssistant { prompt += "<|im_start|>assistant\n<think>" }
+        // Preserve history in both modes; only the next generation's reasoning prefix changes.
+        if addAssistant { prompt += "<|im_start|>assistant\n<think>" + (thinkingEnabled ? "" : "</think>") }
         return prompt
     }
 

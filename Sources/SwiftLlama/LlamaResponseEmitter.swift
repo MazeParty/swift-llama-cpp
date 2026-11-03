@@ -24,11 +24,11 @@ struct LlamaResponseEmitter {
     private var hasAnswer = false
     private var answerID: String { "\(generationID)-answer" }
 
-    mutating func beginPrefilledReasoning() async throws {
-        // LFM3's generation prompt already contains this token; retain it for parsing and raw replay.
-        rawOutput = "<think>"
-        if parsesTools { _ = try toolParser.append("<think>") }
-        await send(parser.append("<think>"))
+    mutating func beginPrefilledReasoning(enabled: Bool = true) async throws {
+        // Retain the template's prefix for parsing and replay without counting it as generated output.
+        rawOutput = enabled ? "<think>" : "<think></think>"
+        if parsesTools { _ = try toolParser.append(rawOutput) }
+        await send(parser.append(rawOutput))
     }
 
     mutating func append(_ text: String, countingToken: Bool = true) async throws {
@@ -136,6 +136,7 @@ struct LlamaReasoningParser: Sendable {
     private(set) var reasoning: [String] = []
     private(set) var isReasoning = false
     private var closingDelimiter = "</think>"
+    private var activeReasoningIndex: Int?
     private var pending = ""
 
     mutating func append(_ text: String) -> [Fragment] {
@@ -143,7 +144,7 @@ struct LlamaReasoningParser: Sendable {
         pending += text
         var fragments: [Fragment] = []
         while !pending.isEmpty {
-            let delimiters = isReasoning ? [closingDelimiter] : ["<think>", "<|channel>thought\n"]
+            let delimiters = isReasoning ? [closingDelimiter] : ["<think>", "<|channel>thought\n", "</think>", "<channel|>"]
             let match = delimiters.compactMap { delimiter in
                 pending.range(of: delimiter).map { (delimiter: delimiter, range: $0) }
             }.min { $0.range.lowerBound < $1.range.lowerBound }
@@ -152,13 +153,13 @@ struct LlamaReasoningParser: Sendable {
                 emit(String(pending[..<range.lowerBound]), into: &fragments)
                 pending = String(pending[range.upperBound...])
                 if isReasoning {
-                    fragments.append(.reasoningFinished(reasoning.count - 1))
-                } else {
+                    if let activeReasoningIndex { fragments.append(.reasoningFinished(activeReasoningIndex)) }
+                    activeReasoningIndex = nil
+                    isReasoning = false
+                } else if match.delimiter == "<think>" || match.delimiter == "<|channel>thought\n" {
                     closingDelimiter = match.delimiter == "<think>" ? "</think>" : "<channel|>"
-                    reasoning.append("")
-                    fragments.append(.reasoningStarted(reasoning.count - 1))
+                    isReasoning = true
                 }
-                isReasoning.toggle()
             } else {
                 let held = delimiters.map { delimiter in
                     (1..<delimiter.count).reversed().first { pending.hasSuffix(delimiter.prefix($0)) } ?? 0
@@ -175,7 +176,8 @@ struct LlamaReasoningParser: Sendable {
         var fragments: [Fragment] = []
         emit(pending, into: &fragments)
         pending = ""
-        if isReasoning { fragments.append(.reasoningFinished(reasoning.count - 1)) }
+        if let activeReasoningIndex { fragments.append(.reasoningFinished(activeReasoningIndex)) }
+        activeReasoningIndex = nil
         isReasoning = false
         return fragments
     }
@@ -183,6 +185,11 @@ struct LlamaReasoningParser: Sendable {
     private mutating func emit(_ text: String, into fragments: inout [Fragment]) {
         guard !text.isEmpty else { return }
         if isReasoning {
+            if activeReasoningIndex == nil {
+                activeReasoningIndex = reasoning.count
+                reasoning.append("")
+                fragments.append(.reasoningStarted(reasoning.count - 1))
+            }
             reasoning[reasoning.count - 1] += text
             fragments.append(.reasoning(reasoning.count - 1, text))
         } else {
