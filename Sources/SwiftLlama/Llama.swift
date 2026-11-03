@@ -18,19 +18,21 @@ final actor Llama {
 
     private var renderSpecialTokens = false
     private let config: LlamaConfig
+    private let thinkingEnabled: Bool
     let maxTokenCount: UInt32
     /// Tracks the current position in the token sequence during decoding.
     var currentTokenPosition: Int32 = 0
     var processedTokens: [llama_token] = []
-    var usesPrefilledReasoning: Bool { model.metaValue(forKey: "general.architecture") == "lfm3" }
+    var usesPrefilledReasoning: Bool { thinkingEnabled && model.metaValue(forKey: "general.architecture") == "lfm3" }
 
-    init(modelPath: String, config: LlamaConfig) throws {
+    init(modelPath: String, config: LlamaConfig, thinkingEnabled: Bool = true) throws {
         guard config.batchSize > 0, config.batchSize <= UInt32(Int32.max),
               config.maxTokenCount >= 8, config.maxTokenCount <= UInt32(Int32.max),
               config.microBatchSize.map({ $0 > 0 && $0 <= config.batchSize }) ?? true,
               config.nThreads.map({ $0 > 0 }) ?? true,
               config.nThreadsBatch.map({ $0 > 0 }) ?? true else { throw LlamaError.invalidConfiguration }
         self.config = config
+        self.thinkingEnabled = thinkingEnabled
         LlamaLog.installDiagnosticCapture()
         LlamaBackend.initialize()
         var model_params = llama_model_default_params()
@@ -133,8 +135,8 @@ final actor Llama {
     func getProcessedTokenIds() -> [llama_token] { processedTokens }
 
     func initializeCompletion(messages: [LlamaChatMessage], addAssistant: Bool? = nil) throws {
-        renderSpecialTokens = messages.contains(where: \.usesLFMToolTemplate) || usesPrefilledReasoning
-        let formattedPrompt = model.applyChatTemplate(to: messages, addAssistant: addAssistant)
+        renderSpecialTokens = messages.contains(where: \.usesLFMToolTemplate) || model.metaValue(forKey: "general.architecture") == "lfm3"
+        let formattedPrompt = model.applyChatTemplate(to: messages, addAssistant: addAssistant, thinkingEnabled: thinkingEnabled)
         guard !formattedPrompt.isEmpty else {
             throw LlamaError.chatTemplateError
         }
@@ -143,7 +145,7 @@ final actor Llama {
 
     func contextUsage(_ messages: [LlamaChatMessage], addingAssistant: Bool) throws -> LlamaContextUsage {
         try Task.checkCancellation()
-        let formattedPrompt = model.applyChatTemplate(to: messages, addAssistant: addingAssistant)
+        let formattedPrompt = model.applyChatTemplate(to: messages, addAssistant: addingAssistant, thinkingEnabled: thinkingEnabled)
         guard !formattedPrompt.isEmpty else { throw LlamaError.chatTemplateError }
         let usedTokens = tokenizePrompt(formattedPrompt).count
         return LlamaContextUsage(

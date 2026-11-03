@@ -13,6 +13,9 @@ public enum LlamaCapabilityProfile: Sendable {
     /// LFM3-1.7B-QAD-Q4_0 with llama.cpp b11960 and the XML tool protocol.
     case lfm3QADQ4_0
 
+    /// Whether this verified model/template contract can enable and disable reasoning generation.
+    public var supportsThinkingControl: Bool { self == .lfm3QADQ4_0 }
+
     func validate(modelURL: URL) throws {
         guard self != .textOnly else { return }
         let file = try FileHandle(forReadingFrom: modelURL)

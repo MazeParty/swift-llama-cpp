@@ -82,6 +82,9 @@ struct LFM3ToolCallingTests {
         let messages: [LlamaChatMessage] = [.init(role: .system, content: ""), .init(role: .user, content: "Compute"), .init(role: .assistant, content: call), .init(role: .tool, content: "391")]
         let expected = "<|startoftext|><|im_start|>user\nCompute<|im_end|>\n<|im_start|>assistant\n<think></think>" + call + "<|im_end|>\n<|im_start|>tool\n<tool_response>\n391\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>"
         #expect(LlamaModel.renderLFM3Prompt(messages, bos: "<|startoftext|>", addAssistant: true) == expected)
+        #expect(LlamaModel.renderLFM3Prompt(messages, bos: "<|startoftext|>", addAssistant: true, thinkingEnabled: false) == expected + "</think>")
+        #expect(LlamaModel.renderLFM3Prompt(messages, bos: "", addAssistant: false, thinkingEnabled: true)
+            == LlamaModel.renderLFM3Prompt(messages, bos: "", addAssistant: false, thinkingEnabled: false))
     }
 
     @available(iOS 27.0, macOS 27.0, *)
@@ -120,6 +123,52 @@ struct LFM3ToolCallingTests {
         defer { try? FileManager.default.removeItem(at: url) }
         #expect(throws: LlamaToolError.unverifiedModel) { try LlamaCapabilityProfile.lfm3QADQ4_0.validate(modelURL: url) }
     }
+
+    @available(iOS 27.0, macOS 27.0, *)
+    @Test("Only the verified switchable profile can request thinking off")
+    func thinkingCapability() async throws {
+        #expect(LlamaCapabilityProfile.lfm3QADQ4_0.supportsThinkingControl)
+        #expect(!LlamaCapabilityProfile.textOnly.supportsThinkingControl)
+        #expect(!LlamaCapabilityProfile.lfm2_5InstructQ4_0.supportsThinkingControl)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".gguf")
+        try Data("renamed model".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let config = LlamaConfig(batchSize: 128, maxTokenCount: 2048)
+        let unknown = LlamaLanguageModel(modelURL: url, configuration: config, thinkingEnabled: false)
+        await #expect(throws: LlamaExecutorError.unsupportedThinkingControl) { try await unknown.prewarm(transcript: Transcript()) }
+        let forged = LlamaLanguageModel(modelURL: url, configuration: config, capabilityProfile: .lfm3QADQ4_0, thinkingEnabled: false)
+        await #expect(throws: LlamaToolError.unverifiedModel) { try await forged.prewarm(transcript: Transcript()) }
+    }
+
+    @available(iOS 27.0, macOS 27.0, *)
+    @Test("Thinking-off prefixes and stray closing tags never become visible reasoning or executable examples")
+    func thinkingOff() async throws {
+        let generated = "</think><think>Example: " + call + "</think>Visible answer."
+        let engine = PrefilledReasoningEngine(tokens: generated.map(String.init), prefilled: false)
+        let tool = PrefilledCalculator()
+        let model = LlamaLanguageModel(capabilityProfile: .lfm3QADQ4_0, engineFactory: { engine })
+        let session = LanguageModelSession(model: model, tools: [tool])
+        let response = try await session.respond(to: "Explain without calling any tool")
+        #expect(response.content == "Visible answer.")
+        #expect(await tool.calls == 0)
+        #expect(response.usage.output.totalTokenCount == generated.count)
+        #expect(try LlamaTranscriptMapper.messages(session.transcript, profile: .lfm3QADQ4_0).last?.content == "<think></think>" + generated)
+        await model.unload()
+    }
+
+    @Test("Empty thinking envelopes and stray closing tokens survive every stream boundary")
+    func offFragmentation() {
+        let raw = "<think></think></think>Answer with <ordinary> text."
+        for boundary in 0...raw.count {
+            var parser = LlamaReasoningParser()
+            let split = raw.index(raw.startIndex, offsetBy: boundary)
+            _ = parser.append(String(raw[..<split]))
+            _ = parser.append(String(raw[split...]))
+            _ = parser.finish()
+            #expect(parser.reasoning.isEmpty)
+            #expect(parser.answer == "Answer with <ordinary> text.")
+        }
+    }
 }
 
 @available(iOS 27.0, macOS 27.0, *)
@@ -134,8 +183,9 @@ private actor PrefilledCalculator: Tool {
 @available(iOS 27.0, macOS 27.0, *)
 private actor PrefilledReasoningEngine: LlamaExecutorEngine {
     var tokens: [String]
-    init(tokens: [String]) { self.tokens = tokens }
-    func hasPrefilledReasoning() -> Bool { true }
+    let prefilled: Bool
+    init(tokens: [String], prefilled: Bool = true) { self.tokens = tokens; self.prefilled = prefilled }
+    func hasPrefilledReasoning() -> Bool { prefilled }
     func prepare(_ messages: [LlamaChatMessage], addingAssistant: Bool) -> Int { 17 }
     func updateSamplingConfig(_ config: LlamaSamplingConfig) {}
     func generateNextToken() -> NextToken { tokens.isEmpty ? .endOfString : .token(tokens.removeFirst()) }

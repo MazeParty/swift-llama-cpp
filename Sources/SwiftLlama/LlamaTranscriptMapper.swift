@@ -172,16 +172,18 @@ enum LlamaTranscriptMapper {
 }
 
 @available(iOS 27.0, macOS 27.0, *)
-enum LlamaExecutorError: LocalizedError {
+enum LlamaExecutorError: LocalizedError, Equatable {
     case busy
     case invalidOutputLimit
     case invalidConfiguration
+    case unsupportedThinkingControl
 
     var errorDescription: String? {
         switch self {
         case .busy: "This GGUF model is already generating or stopping. Use an independent model instance for another session."
         case .invalidOutputLimit: "The maximum response token count must be positive."
         case .invalidConfiguration: "GGUF inference requires a positive batch size and a context window of at least eight tokens."
+        case .unsupportedThinkingControl: "This verified GGUF profile does not support switching thinking off."
         }
     }
 }
