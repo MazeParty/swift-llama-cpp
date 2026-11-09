@@ -46,7 +46,16 @@ Prompt batch size, physical microbatch size and the two thread counts are indepe
     )
 
 The second example shows configuration controls; the best batch depends on the
-workload. See [measured CPU/Metal results](Verification/PERFORMANCE.md) and
+workload.
+
+Long contexts can quantize the key and value caches, which roughly halves their
+memory at `q8_0`. A quantized cache needs Flash Attention, so `.disabled` with a
+quantized cache is rejected:
+
+    let longContext = LlamaConfig(
+        batchSize: 512, maxTokenCount: 65_536,
+        flashAttention: .enabled, cacheType: .q8_0
+    ) See [measured CPU/Metal results](Verification/PERFORMANCE.md) and
 [correctness fixes, regression coverage and API changes](Verification/README.md).
 
 The [GPU before/after comparison](Verification/GPU-BEFORE-AFTER.md) measures both

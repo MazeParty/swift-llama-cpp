@@ -143,7 +143,8 @@ struct LlamaLifecycleRegressionTests {
             LlamaConfig(batchSize: 128, maxTokenCount: 512, microBatchSize: 0),
             LlamaConfig(batchSize: 128, maxTokenCount: 512, microBatchSize: 256),
             LlamaConfig(batchSize: 128, maxTokenCount: 512, nThreads: 0),
-            LlamaConfig(batchSize: 128, maxTokenCount: 512, nThreadsBatch: -1)
+            LlamaConfig(batchSize: 128, maxTokenCount: 512, nThreadsBatch: -1),
+            LlamaConfig(batchSize: 128, maxTokenCount: 512, flashAttention: .disabled, cacheType: .q8_0)
         ] {
             #expect(throws: LlamaError.self) {
                 _ = try Llama(modelPath: "/nonexistent", config: config)

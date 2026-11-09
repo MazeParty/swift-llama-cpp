@@ -30,7 +30,8 @@ final actor Llama {
               config.maxTokenCount >= 8, config.maxTokenCount <= UInt32(Int32.max),
               config.microBatchSize.map({ $0 > 0 && $0 <= config.batchSize }) ?? true,
               config.nThreads.map({ $0 > 0 }) ?? true,
-              config.nThreadsBatch.map({ $0 > 0 }) ?? true else { throw LlamaError.invalidConfiguration }
+              config.nThreadsBatch.map({ $0 > 0 }) ?? true,
+              config.cacheType == .f16 || config.flashAttention != .disabled else { throw LlamaError.invalidConfiguration }
         self.config = config
         self.thinkingEnabled = thinkingEnabled
         LlamaLog.installDiagnosticCapture()
@@ -73,6 +74,9 @@ final actor Llama {
         contextParam.n_ubatch = config.microBatchSize ?? config.batchSize
         contextParam.offload_kqv = useGPU
         contextParam.op_offload = useGPU
+        contextParam.flash_attn_type = config.flashAttention.llamaValue
+        contextParam.type_k = config.cacheType.ggmlType
+        contextParam.type_v = config.cacheType.ggmlType
 
         let contextDiagnosticMarker = LlamaLog.marker()
         let context = LlamaContext(model: model, parameters: contextParam)
@@ -311,5 +315,25 @@ final actor Llama {
 
         currentTokenPosition = Int32(processedTokens.count)
 
+    }
+}
+
+private extension LlamaConfig.FlashAttention {
+    var llamaValue: llama_flash_attn_type {
+        switch self {
+        case .automatic: LLAMA_FLASH_ATTN_TYPE_AUTO
+        case .enabled: LLAMA_FLASH_ATTN_TYPE_ENABLED
+        case .disabled: LLAMA_FLASH_ATTN_TYPE_DISABLED
+        }
+    }
+}
+
+private extension LlamaConfig.CacheType {
+    var ggmlType: ggml_type {
+        switch self {
+        case .f16: GGML_TYPE_F16
+        case .q8_0: GGML_TYPE_Q8_0
+        case .q4_0: GGML_TYPE_Q4_0
+        }
     }
 }
